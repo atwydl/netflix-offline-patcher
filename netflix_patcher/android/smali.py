@@ -104,6 +104,54 @@ def _decl_files_all(dec, typ):
                 pass
     return out
 
+_CURRENT_PROFILE = "com/netflix/games/player/profiles/CurrentProfile"
+
+_OFFLINE_PROFILE = "Lcom/netflix/games/player/profiles/NfxOfflineProfile;"
+
+OFFLINE_PLAYER_ID = "offline-player"
+
+def emit_offline_profile(dec):
+    """Write a concrete CurrentProfile subclass with a stable offline identity; returns its
+    descriptor, or None. Subclassed directly: the SDK's own needs an R8-renamed collaborator."""
+    cp = find_smali_file(dec, _CURRENT_PROFILE)
+    if cp is None:
+        return None
+    ctor = "<init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
+    if f".method public constructor {ctor}" not in cp.read_text(encoding="utf-8"):
+        return None
+
+    def _with_data(value):
+        return [f"    sget-object v0, {_RES}->Companion:{_RESCOMP}",
+                f'    const-string v1, "{value}"',
+                f"    invoke-virtual {{v0, v1}}, {_RESCOMP}->withData(Ljava/lang/Object;){_RES}",
+                "    move-result-object v0", "    return-object v0"]
+
+    out = [f".class public final {_OFFLINE_PROFILE}",
+           f".super L{_CURRENT_PROFILE};", "",
+           f"# {MARKER}: synthetic signed-in profile for offline play", "",
+           ".method public constructor <init>()V", "    .locals 3",
+           f'    const-string v0, "{OFFLINE_PLAYER_ID}"',
+           '    const-string v1, "Offline"',
+           '    const-string v2, "en"',
+           f"    invoke-direct {{p0, v0, v1, v2}}, L{_CURRENT_PROFILE};->{ctor}",
+           "    return-void", ".end method", "",
+           ".method public getLegacyGamerAccessToken()" + _RES, "    .locals 2"]
+    out += _with_data("offline")
+    out += [".end method", "",
+            ".method public getLegacyGamerProfileId()" + _RES, "    .locals 2"]
+    out += _with_data(OFFLINE_PLAYER_ID)
+    out += [".end method"]
+    (cp.parent / "NfxOfflineProfile.smali").write_text("\n".join(out) + "\n", encoding="utf-8")
+    return _OFFLINE_PROFILE
+
+def offline_profile_body(cls):
+    """Method body handing back NetflixResult.withData(<the offline profile>)."""
+    return [f"new-instance v0, {cls}",
+            f"invoke-direct {{v0}}, {cls}-><init>()V",
+            f"sget-object v1, {_RES}->Companion:{_RESCOMP}",
+            f"invoke-virtual {{v1, v0}}, {_RESCOMP}->withData(Ljava/lang/Object;){_RES}",
+            "move-result-object v0", "return-object v0"]
+
 def strip_non_arm_libs(dec):
     """GameMaker's engine (libyoyo.so) ships arm-only; if the x86/x86_64 lib dirs carry no engine,
     strip them so x86 emulators run the app under ARM translation instead of failing to find it."""

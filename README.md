@@ -55,7 +55,9 @@ Netflix shipped three SDK generations. Through the Unity bridge
 
 - **Newer (2025), `com.netflix.games`:** `doRequestPlayerAccess` returns a granted result
   locally; `startSdkErrorActivity` becomes a no-op; `readBlob`/`getBlobs`/`writeBlob` return
-  an offline "no cloud save" result instead of hanging.
+  an offline "no cloud save" result instead of hanging. `getCurrentProfile` hands back a
+  synthetic offline profile: granting access is not the same as being signed in, and a game
+  that asks the Profiles API instead ("what is my user id?") otherwise waits forever.
 - **Older (2024):** no `doRequestPlayerAccess`; the gate is an access UI. No-op the error
   screen, return a synthetic profile from `getCurrentProfile`, and fire the access-granted
   and UI-dismissed events once. Obfuscated classes are found by their SDK supertypes.

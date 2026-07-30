@@ -248,14 +248,14 @@ static char g_read_buf[262400];
  * slots return ErrorUnknownSlotId (1001). Both route to handleReadSlotResult and complete the
  * read Task via SetResult (miss just builds a container with null data), verified on-device. */
 
-/* Delivery is per-slot: MAIN inline so its load continuation resets the backend _currOp to NONE
- * inside the read call (saves gate on that); other slots async on the main queue. */
-static int slot_wants_inline(const char *id) {
+/* Read replies always go inline: a title can read a slot from a synchronous boot-time
+ * initializer that blocks the main thread, so a main-queue reply would never run. */
+static int slot_wants_empty_on_miss(const char *id) {
     return id && id[0] == 'M' && id[1] == 'A' && id[2] == 'I' && id[3] == 'N' && id[4] == 0;  /* "MAIN" */
 }
 static void deliver_read(const char *slotId, const char *json) {
-    if (slot_wants_inline(slotId)) { if (g_cloud_cb) g_cloud_cb(json); }
-    else deliver(g_cloud_cb, json);
+    (void)slotId;
+    if (g_cloud_cb) g_cloud_cb(json);
 }
 
 static void nfx0_read_slot(int tracker, const char *slotId) {
@@ -266,15 +266,13 @@ static void nfx0_read_slot(int tracker, const char *slotId) {
         /* Read-miss is per-slot: MAIN wants an empty LOADED slot (status 0, "") so the game's
          * save group flips to "loaded"; other slots want ErrorUnknownSlotId (1001), which their
          * read path maps to "no save" and completes the Task (a status-0 there would not). */
-        if (slot_wants_inline(slotId) && g_cloud_cb) {   /* MAIN only */
-            char buf[160], *p = buf;
-            p = scpy(p, "{\"identifier\":"); p = sint(p, tracker);
-            p = scpy(p, ",\"type\":\"ReadSlotResult\",\"result\":{\"status\":0,\"data\":\"\"}}"); *p = 0;
-            deliver_read(slotId, buf);
-        } else {
-            /* other slots: read-miss = ErrorUnknownSlotId, delivered async */
-            cloud_status(tracker, "ReadSlotResult", 1001);
-        }
+        char buf[160], *p = buf;
+        p = scpy(p, "{\"identifier\":"); p = sint(p, tracker);
+        p = scpy(p, ",\"type\":\"ReadSlotResult\",\"result\":{\"status\":");
+        if (slot_wants_empty_on_miss(slotId)) p = scpy(p, "0,\"data\":\"\"}}");
+        else                                  p = scpy(p, "1001}}");
+        *p = 0;
+        deliver_read(slotId, buf);
         return;
     }
     long n = 0, cap = (long)sizeof g_read_data - 1;  /* drain the whole file: read() can return short */
@@ -283,7 +281,13 @@ static void nfx0_read_slot(int tracker, const char *slotId) {
     close(fd);
     g_read_data[n] = 0;
     { char l[120]; snprintf(l, sizeof l, "read_slot GOT bytes=%ld trunc=%d\n", n, truncated); dbg(l); }
-    if (truncated) { cloud_status(tracker, "ReadSlotResult", 1001); return; }  /* too big: no save beats a corrupt blob */
+    if (truncated) {  /* too big: no save beats a corrupt blob. inline, like every read reply */
+        char b[160], *q = b;
+        q = scpy(q, "{\"identifier\":"); q = sint(q, tracker);
+        q = scpy(q, ",\"type\":\"ReadSlotResult\",\"result\":{\"status\":1001}}"); *q = 0;
+        deliver_read(slotId, b);
+        return;
+    }
     char *p = g_read_buf;
     p = scpy(p, "{\"identifier\":"); p = sint(p, tracker);
     p = scpy(p, ",\"type\":\"ReadSlotResult\",\"result\":{\"status\":0,\"data\":\"");

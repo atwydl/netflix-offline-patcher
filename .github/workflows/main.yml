@@ -1,0 +1,24 @@
+name: Patch IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'IPA URL'
+        required: true
+
+jobs:
+  patch:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download & Patch
+        run: |
+          curl -L -o game.ipa "${{ inputs.url }}"
+          python unlock_netflix.py game.ipa
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched
+          path: game-offline.ipa
